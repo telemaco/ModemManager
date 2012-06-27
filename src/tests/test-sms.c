@@ -627,6 +627,68 @@ test_create_pdu_gsm_no_validity (void *f, gpointer d)
     g_assert_cmpint (msgstart, ==, 1);
 }
 
+static void
+test_array_pdu1 (void *f, gpointer d)
+{
+  GPtrArray *array;
+  GByteArray *msg_pdu = NULL;
+  SmsPDUData *pdu_data = NULL;
+  GError *error = NULL;
+  char *hexpdu;
+
+  guint8 *pdu;
+  guint len = 0, msgstart = 0;
+  char *hexpdu2;
+  
+  static const char *smsc = "+19037029920";
+  static const char *number = "+15555551234";
+  static const char *text = "Hi there...Tue 17th Jan 2012 05:30.18 pm (GMT+1) ΔΔΔΔΔ";
+
+  array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+  pdu_data = g_ptr_array_index(array, 0);
+  msg_pdu = pdu_data->pdu;
+
+  hexpdu = utils_bin2hexstr (msg_pdu->data, msg_pdu->len);
+  
+  pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
+  hexpdu2 = utils_bin2hexstr (pdu, len);
+
+  g_assert_cmpstr (hexpdu, ==, hexpdu2);
+  g_assert_cmpint (msg_pdu->len, ==, len);
+  g_assert_cmpint (pdu_data->msg_start, ==, msgstart);
+}
+
+static void
+test_array_pdu2 (void *f, gpointer d)
+{
+  GPtrArray *array;
+  GByteArray *msg_pdu = NULL;
+  SmsPDUData *pdu_data = NULL;
+  GError *error = NULL;
+  char *hexpdu;
+
+  guint8 *pdu;
+  guint len = 0, msgstart = 0;
+  char *hexpdu2;
+  
+  static const char *smsc = "+19037029920";
+  static const char *number = "+15555551234";
+  static const char *text = "你好";
+
+  array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+  pdu_data = g_ptr_array_index(array, 0);
+  msg_pdu = pdu_data->pdu;
+
+  hexpdu = utils_bin2hexstr (msg_pdu->data, msg_pdu->len);
+  
+  pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
+  hexpdu2 = utils_bin2hexstr (pdu, len);
+
+  g_assert_cmpstr (hexpdu, ==, hexpdu2);
+  g_assert_cmpint (msg_pdu->len, ==, len);
+  g_assert_cmpint (pdu_data->msg_start, ==, msgstart);
+}
+
 #if 0
 {
 int i;
@@ -683,6 +745,10 @@ int main (int argc, char **argv)
 
     g_test_suite_add (suite, TESTCASE (test_create_pdu_gsm_3, NULL));
     g_test_suite_add (suite, TESTCASE (test_create_pdu_gsm_no_validity, NULL));
+
+    //New sms_create_submit_pdu_array
+    g_test_suite_add (suite, TESTCASE (test_array_pdu1, NULL));
+    g_test_suite_add (suite, TESTCASE (test_array_pdu2, NULL));
 
     result = g_test_run ();
 
