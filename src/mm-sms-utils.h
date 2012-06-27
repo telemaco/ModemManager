@@ -11,6 +11,7 @@
  * GNU General Public License for more details:
  *
  * Copyright (C) 2010 Red Hat, Inc.
+ * Copyright (C) 2012 OpenShine, S.L.
  */
 
 #ifndef MM_SMS_UTILS_H
@@ -39,11 +40,28 @@ GHashTable *sms_properties_hash_new (const char *smsc,
                                      guint data_coding_scheme,
                                      guint *class);
 
+GPtrArray *
+sms_create_submit_pdu_array (const char *number,
+                             const char *text,
+                             const char *smsc,
+                             guint validity,
+                             guint class,
+                             GError **error);
+
+typedef struct _SmsPDUData SmsPDUData;
+
+struct _SmsPDUData {
+    guint msg_start;
+    GByteArray *pdu;
+};
+
 /* For testcases only */
 guint sms_encode_address (const char *address,
                           guint8 *buf,
                           size_t buflen,
                           gboolean is_smsc);
+
+
 
 
 #endif /* MM_SMS_UTILS_H */

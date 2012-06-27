@@ -11,6 +11,7 @@
  * GNU General Public License for more details:
  *
  * Copyright (C) 2011 Red Hat, Inc.
+ * Copyright (C) 2012 OpenShine, S.L.
  */
 
 #include <ctype.h>
@@ -617,6 +618,334 @@ validity_to_relative (guint validity)
 }
 
 #define PDU_SIZE 200
+
+
+static GByteArray *
+sms_get_smsc_pdu (const char* smsc, 
+                  GError  **error) 
+{
+    GByteArray *result = NULL;
+    guint len, offset = 0;
+    guint8 *pdu;
+    
+    pdu = g_malloc0(100);
+    
+    if (smsc) {
+        len = sms_encode_address (smsc, pdu, 100, TRUE);
+        if (len == 0) {
+            g_set_error (error,
+                         MM_MSG_ERROR,
+                         MM_MSG_ERROR_INVALID_PDU_PARAMETER,
+                         "Invalid SMSC address '%s'", smsc);
+            g_free(pdu);
+            return NULL;
+        }
+        offset += len;
+    } else {
+        /* No SMSC, use default */
+        pdu[offset++] = 0x00;
+    }
+    result = g_byte_array_new ();
+    result = g_byte_array_append (result, (guint8*) pdu, offset);
+    g_free(pdu);
+    return result;
+}
+
+static GByteArray *
+sms_get_submit_data_pdu (gboolean request_status,
+                         guint validity,
+                         gboolean udh)
+{
+    GByteArray *result = NULL;
+    guint offset = 0;
+    guint8 *pdu;
+
+    pdu = g_malloc0(10);
+    if (validity > 0)
+        pdu[offset] = 1 << 4; /* TP-VP present; format RELATIVE */
+    else
+        pdu[offset] = 0;      /* TP-VP not present */
+
+
+    if (request_status)
+        pdu[offset++] |= 0x01;  /* TP-MTI = SMS-SUBMIT */
+    else
+        pdu[offset++] |= 0x21;
+
+    if (udh)
+        pdu[offset] |= 0x40;
+
+    pdu[offset++] = 0x00;     /* TP-Message-Reference: filled by device */
+        
+    result = g_byte_array_new ();
+    result = g_byte_array_append (result, (guint8*) pdu, offset);
+    g_free(pdu);
+    return result;
+}
+
+static GByteArray *
+sms_get_address_pdu (const char *number,
+                     GError **error)
+{
+    GByteArray *result = NULL;
+    guint len, offset = 0;
+    guint8 *pdu;
+
+    pdu = g_malloc0(100);
+
+    len = sms_encode_address (number, pdu, 100, FALSE);
+    if (len == 0) {
+        g_set_error (error,
+                     MM_MSG_ERROR,
+                     MM_MSG_ERROR_INVALID_PDU_PARAMETER,
+                     "Invalid send-to number '%s'", number);
+        g_free(pdu);
+        return NULL;
+    }
+    offset += len;
+    
+    result = g_byte_array_new ();
+    result = g_byte_array_append (result, (guint8*) pdu, offset);
+    g_free(pdu);
+    return result;
+}
+
+static GByteArray *
+sms_get_tppid_pdu (void)
+{
+    GByteArray *result = NULL;
+    guint8 b ;
+
+    b = 0x00;
+    result = g_byte_array_new ();
+    result = g_byte_array_append (result, &b, 1);
+    
+    return result;
+}
+
+static GByteArray *
+sms_get_single_msg_pdu_with_gsm7_format(const char *text,
+                                        const guint textlen,
+                                        GError **error)
+{
+    GByteArray *msg_pdu;
+    guint8 *unpacked, *packed;
+    guint32 unlen = 0, packlen = 0;
+
+    unpacked = mm_charset_utf8_to_unpacked_gsm (text, &unlen);
+    if (!unpacked || unlen == 0) {
+        g_free (unpacked);
+        g_set_error_literal (error,
+                             MM_MSG_ERROR,
+                             MM_MSG_ERROR_INVALID_PDU_PARAMETER,
+                             "Failed to convert message text to GSM.");
+        return NULL;
+    }
+    
+    packed = gsm_pack (unpacked, unlen, 0, &packlen);
+    g_free (unpacked);
+    if (!packed || packlen == 0) {
+        g_free (packed);
+        g_set_error_literal (error,
+                             MM_MSG_ERROR,
+                             MM_MSG_ERROR_INVALID_PDU_PARAMETER,
+                             "Failed to pack message text to GSM.");
+        return NULL;
+    }
+    msg_pdu = g_byte_array_new ();
+    msg_pdu = g_byte_array_append (msg_pdu, (guint8*) packed, packlen);
+    g_free (packed);
+
+    return msg_pdu;
+}
+
+static GByteArray *
+sms_get_single_msg_pdu_with_ucs2_format(const char *text,
+                                        const guint textlen,
+                                        GError **error)
+{
+    GByteArray *msg_pdu;
+    
+    msg_pdu = g_byte_array_sized_new (textlen / 2);
+    if (!mm_modem_charset_byte_array_append (msg_pdu, text, FALSE, MM_MODEM_CHARSET_UCS2)) {
+        g_byte_array_free (msg_pdu, TRUE);
+        g_set_error_literal (error,
+                             MM_MSG_ERROR,
+                             MM_MSG_ERROR_INVALID_PDU_PARAMETER,
+                             "Failed to convert message text to UCS2.");
+        return NULL;
+    }
+ 
+    return msg_pdu;
+}
+
+static GList *
+sms_get_msg_pdu_list(const char *text,
+                     guint validity,
+                     GError **error)
+{
+    GList *result = NULL;
+    MMModemCharset best_cs = MM_MODEM_CHARSET_GSM;
+    guint ucs2len = 0, gsm_unsupported = 0;
+    guint textlen = 0;
+    
+    GByteArray *header;
+    header = g_byte_array_new ();
+    
+    
+    textlen = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_GSM, &gsm_unsupported);
+    if (gsm_unsupported > 0) {
+        ucs2len = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_UCS2, NULL);
+        best_cs = MM_MODEM_CHARSET_UCS2;
+        textlen = ucs2len;
+    }
+    
+    if (best_cs == MM_MODEM_CHARSET_UCS2){
+        guint8 b = 0x08; 
+        header = g_byte_array_append (header, &b, 1);
+    }else{
+        guint8 b = 0x00; 
+        header = g_byte_array_append (header, &b, 1);
+    }
+    
+    if (validity > 0){
+        guint8 v;
+        v = validity_to_relative (validity); 
+        header = g_byte_array_append (header, &v, 1);
+    }
+    
+    if ((best_cs == MM_MODEM_CHARSET_GSM  && textlen <= 160) ||
+        (best_cs == MM_MODEM_CHARSET_UCS2 && textlen <= 140)) {
+        guint8 len_uint8;
+        
+        len_uint8 = textlen;
+        header = g_byte_array_append (header, &len_uint8, 1);
+    }
+
+    if (best_cs == MM_MODEM_CHARSET_GSM) {
+        if (textlen <= 160){
+            GByteArray *msg_pdu = NULL;
+            GByteArray *pdu = NULL;
+            
+            msg_pdu = sms_get_single_msg_pdu_with_gsm7_format(text, textlen, error);
+            
+            if (msg_pdu != NULL){
+                pdu = g_byte_array_new ();
+                pdu = g_byte_array_append (pdu, (guint8*) header->data, header->len);
+                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
+ 
+                g_byte_array_free (msg_pdu, TRUE);
+                
+                result = g_list_append(result, pdu);
+            }
+            
+        }else{
+            //
+        }
+    }else{
+        if (textlen <= 140){
+            GByteArray *msg_pdu = NULL;
+            GByteArray *pdu = NULL;
+            
+            msg_pdu = sms_get_single_msg_pdu_with_ucs2_format(text, textlen, error);
+            if (msg_pdu != NULL){
+                pdu = g_byte_array_new ();
+                pdu = g_byte_array_append (pdu, (guint8*) header->data, header->len);
+                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
+
+                g_byte_array_free (msg_pdu, TRUE);
+                result = g_list_append(result, pdu);
+            }
+            
+        }else{
+            //
+        }
+    }
+
+    g_byte_array_free (header, TRUE);
+    return result;
+}
+
+static void
+sms_pdu_data_free (gpointer element){
+    SmsPDUData *pdu_data;
+    
+    pdu_data = (SmsPDUData *) element;
+    g_byte_array_free (pdu_data->pdu, TRUE);
+    g_free(pdu_data);
+}
+
+GPtrArray *
+sms_create_submit_pdu_array (const char *number,
+                             const char *text,
+                             const char *smsc,
+                             guint validity,
+                             guint class,
+                             GError **error)
+{
+    GPtrArray *result = NULL;
+    GByteArray *smsc_pdu = NULL;
+    GByteArray *submit_data_pdu = NULL;
+    GByteArray *address_pdu = NULL;
+    GByteArray *tppid_pdu = NULL;
+    GList *sms_msg_pdu = NULL;
+ 
+    smsc_pdu = sms_get_smsc_pdu (smsc, error);
+    submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, FALSE);
+    address_pdu = sms_get_address_pdu(number, error);
+    tppid_pdu = sms_get_tppid_pdu();
+    sms_msg_pdu = sms_get_msg_pdu_list(text, validity, error);
+
+    if (sms_msg_pdu != NULL && smsc_pdu != NULL &&
+        submit_data_pdu != NULL && address_pdu != NULL &&
+        tppid_pdu != NULL) {
+
+        if (g_list_length(sms_msg_pdu) == 1) {
+            GByteArray *pdu = NULL;
+            GByteArray *msg_pdu = NULL;
+            SmsPDUData *pdu_data = NULL;
+
+            pdu = g_byte_array_new ();
+            pdu = g_byte_array_append (pdu, (guint8*) smsc_pdu->data, smsc_pdu->len);
+            pdu = g_byte_array_append (pdu, (guint8*) submit_data_pdu->data, submit_data_pdu->len);
+            pdu = g_byte_array_append (pdu, (guint8*) address_pdu->data, address_pdu->len);
+            pdu = g_byte_array_append (pdu, (guint8*) tppid_pdu->data, tppid_pdu->len);
+
+            msg_pdu = g_list_nth_data(sms_msg_pdu, 0);
+            pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
+
+            /* g_print("smsc: %s\n", utils_bin2hexstr(smsc_pdu->data, smsc_pdu->len)); */
+            /* g_print("submit: %s\n", utils_bin2hexstr(submit_data_pdu->data, submit_data_pdu->len)); */
+            /* g_print("address: %s\n", utils_bin2hexstr(address_pdu->data, address_pdu->len)); */
+            /* g_print("tppid: %s\n", utils_bin2hexstr(tppid_pdu->data, tppid_pdu->len)); */
+            /* g_print("msg: %s\n", utils_bin2hexstr(msg_pdu->data, msg_pdu->len)); */
+
+            result = g_ptr_array_new_with_free_func(sms_pdu_data_free);
+            pdu_data = g_new(SmsPDUData, 1);
+            pdu_data->pdu = pdu;
+            pdu_data->msg_start = smsc_pdu->len ;
+            
+            g_ptr_array_add(result, pdu_data);
+
+            return result;
+        }else{
+            //
+        }
+    }
+    
+    if (smsc_pdu != NULL)
+        g_byte_array_free (smsc_pdu, TRUE);
+    if (submit_data_pdu != NULL)
+        g_byte_array_free (submit_data_pdu, TRUE);
+    if (address_pdu != NULL)
+        g_byte_array_free (address_pdu, TRUE);
+    if (tppid_pdu != NULL)
+        g_byte_array_free (tppid_pdu, TRUE);
+    if (sms_msg_pdu != NULL)
+        g_list_free_full (sms_msg_pdu, (GDestroyNotify) g_byte_array_unref);
+    
+    return result;
+}
 
 /**
  * sms_create_submit_pdu:
