@@ -660,21 +660,21 @@ sms_get_submit_data_pdu (gboolean request_status,
     guint offset = 0;
     guint8 *pdu;
 
+    
     pdu = g_malloc0(10);
     if (validity > 0)
         pdu[offset] = 1 << 4; /* TP-VP present; format RELATIVE */
     else
         pdu[offset] = 0;      /* TP-VP not present */
 
+    if (udh == TRUE)
+        pdu[offset] |= 0x40;
 
     if (request_status)
         pdu[offset++] |= 0x01;  /* TP-MTI = SMS-SUBMIT */
     else
         pdu[offset++] |= 0x21;
-
-    if (udh)
-        pdu[offset] |= 0x40;
-
+    
     pdu[offset++] = 0x00;     /* TP-Message-Reference: filled by device */
         
     result = g_byte_array_new ();
@@ -724,12 +724,14 @@ sms_get_tppid_pdu (void)
 }
 
 static GByteArray *
-sms_get_single_msg_pdu_with_gsm7_format(const char *text,
-                                        const guint textlen,
-                                        GError **error)
+sms_pack_msg_pdu_with_gsm7_format (const char *text,
+                                   const guint textlen,
+                                   GByteArray *header,
+                                   GByteArray *udh,
+                                   GError **error)
 {
     GByteArray *msg_pdu;
-    guint8 *unpacked, *packed;
+    guint8 *unpacked, *packed, tlen;
     guint32 unlen = 0, packlen = 0;
 
     unpacked = mm_charset_utf8_to_unpacked_gsm (text, &unlen);
@@ -752,21 +754,36 @@ sms_get_single_msg_pdu_with_gsm7_format(const char *text,
                              "Failed to pack message text to GSM.");
         return NULL;
     }
+    
     msg_pdu = g_byte_array_new ();
     msg_pdu = g_byte_array_append (msg_pdu, (guint8*) packed, packlen);
+    
+    if (udh != NULL){      
+        msg_pdu = g_byte_array_remove_range(msg_pdu, 0, udh->len);
+        msg_pdu = g_byte_array_prepend (msg_pdu, (guint8*) udh->data, udh->len);
+        
+        tlen = unlen -7 + udh->len + 1;
+        msg_pdu = g_byte_array_prepend (msg_pdu, &tlen, 1);
+    }
+    
+    msg_pdu = g_byte_array_prepend (msg_pdu, header->data, header->len);
+    
     g_free (packed);
 
     return msg_pdu;
 }
 
 static GByteArray *
-sms_get_single_msg_pdu_with_ucs2_format(const char *text,
-                                        const guint textlen,
-                                        GError **error)
+sms_pack_msg_pdu_with_ucs2_format (const char *text,
+                                   const guint textlen,
+                                   GByteArray *header,
+                                   GByteArray *udh,
+                                   GError **error)
 {
     GByteArray *msg_pdu;
+    guint8 tlen;
     
-    msg_pdu = g_byte_array_sized_new (textlen / 2);
+    msg_pdu = g_byte_array_sized_new (textlen/2);
     if (!mm_modem_charset_byte_array_append (msg_pdu, text, FALSE, MM_MODEM_CHARSET_UCS2)) {
         g_byte_array_free (msg_pdu, TRUE);
         g_set_error_literal (error,
@@ -775,8 +792,96 @@ sms_get_single_msg_pdu_with_ucs2_format(const char *text,
                              "Failed to convert message text to UCS2.");
         return NULL;
     }
+    
+    
+    if (udh != NULL){
+        tlen = (textlen + 3) * 2;
+        
+        msg_pdu = g_byte_array_prepend (msg_pdu, (guint8*) udh->data, udh->len);
+        msg_pdu = g_byte_array_prepend (msg_pdu, &tlen, 1);
+    }
+    
+    msg_pdu = g_byte_array_prepend (msg_pdu, header->data, header->len); 
  
     return msg_pdu;
+}
+static GList *
+sms_get_multipart_pdu(const char *text,
+                      const guint textlen,
+                      MMModemCharset cs,
+                      GByteArray *header,
+                      GError **error)
+{
+    GList *msgs = NULL, *msg_pdus = NULL, *tmpl = NULL;
+    guint len_without_udh;
+    guint ps, pe;
+    guint8 udh_len, mid, data_len, csms_ref, total_parts, i;
+
+    if (cs == MM_MODEM_CHARSET_GSM)
+        len_without_udh = 160 - 7;
+    else
+        len_without_udh = 70 - 3;
+    
+    ps = 0;
+    pe = len_without_udh;
+    
+    while ( ps < textlen ) {
+        GString *msg_str;
+        
+        msg_str = g_string_new_len(text+ps, pe-ps);
+        msgs = g_list_append(msgs, msg_str); 
+        ps = pe;
+        if (pe + len_without_udh < textlen)
+            pe += len_without_udh;
+        else
+            pe = textlen;
+    }
+    
+    i = 1;
+    udh_len = 0x05;
+    mid = 0x00;
+    data_len = 0x03;
+    csms_ref = g_random_int_range(1,255);
+    total_parts = g_list_length(msgs);
+
+    tmpl = msgs;
+    while (tmpl != NULL){
+        GByteArray *udh;
+        GByteArray *pdu;
+        GString *msg;
+
+        udh = g_byte_array_new ();
+        udh = g_byte_array_append (udh, &udh_len, 1);
+        udh = g_byte_array_append (udh, &mid, 1);
+        udh = g_byte_array_append (udh, &data_len, 1);
+        udh = g_byte_array_append (udh, &csms_ref, 1);
+        udh = g_byte_array_append (udh, &total_parts, 1);
+        udh = g_byte_array_append (udh, &i, 1);
+        
+        
+        if (cs == MM_MODEM_CHARSET_GSM) {           
+            msg = tmpl->data;
+            msg = g_string_prepend(msg, "       "); //UDH Padding 
+            
+            pdu = sms_pack_msg_pdu_with_gsm7_format(msg->str, msg->len, header, udh, error);
+            
+            if (pdu != NULL)
+                msg_pdus = g_list_append(msg_pdus, pdu);
+        }else{
+            msg = tmpl->data;
+            
+            pdu = sms_pack_msg_pdu_with_ucs2_format(msg->str, msg->len, header, udh, error);
+            
+            if (pdu != NULL)
+                msg_pdus = g_list_append(msg_pdus, pdu);
+        }
+        
+        g_byte_array_free (udh, TRUE);
+        tmpl = tmpl->next;
+        i++;
+    }
+    
+    return msg_pdus; 
 }
 
 static GList *
@@ -790,11 +895,13 @@ sms_get_msg_pdu_list(const char *text,
     guint textlen = 0;
     
     GByteArray *header;
+    
     header = g_byte_array_new ();
     
     
     textlen = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_GSM, &gsm_unsupported);
     if (gsm_unsupported > 0) {
+        
         ucs2len = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_UCS2, NULL);
         best_cs = MM_MODEM_CHARSET_UCS2;
         textlen = ucs2len;
@@ -825,40 +932,22 @@ sms_get_msg_pdu_list(const char *text,
     if (best_cs == MM_MODEM_CHARSET_GSM) {
         if (textlen <= 160){
             GByteArray *msg_pdu = NULL;
-            GByteArray *pdu = NULL;
             
-            msg_pdu = sms_get_single_msg_pdu_with_gsm7_format(text, textlen, error);
-            
-            if (msg_pdu != NULL){
-                pdu = g_byte_array_new ();
-                pdu = g_byte_array_append (pdu, (guint8*) header->data, header->len);
-                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
- 
-                g_byte_array_free (msg_pdu, TRUE);
-                
-                result = g_list_append(result, pdu);
-            }
-            
+            msg_pdu = sms_pack_msg_pdu_with_gsm7_format(text, textlen, header, NULL, error);
+            result = g_list_append(result, msg_pdu);
         }else{
-            //
+            result = sms_get_multipart_pdu(text, textlen, MM_MODEM_CHARSET_GSM, header, error);
         }
     }else{
         if (textlen <= 140){
             GByteArray *msg_pdu = NULL;
-            GByteArray *pdu = NULL;
             
-            msg_pdu = sms_get_single_msg_pdu_with_ucs2_format(text, textlen, error);
-            if (msg_pdu != NULL){
-                pdu = g_byte_array_new ();
-                pdu = g_byte_array_append (pdu, (guint8*) header->data, header->len);
-                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
-
-                g_byte_array_free (msg_pdu, TRUE);
-                result = g_list_append(result, pdu);
-            }
+            msg_pdu = sms_pack_msg_pdu_with_ucs2_format(text, textlen, header, NULL, error);
+            result = g_list_append(result, msg_pdu);
             
         }else{
-            //
+            //FIXME : mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_UCS2) not return the correct textlen
+            result = sms_get_multipart_pdu(text, strlen(text), MM_MODEM_CHARSET_UCS2, header, error);
         }
     }
 
@@ -891,20 +980,22 @@ sms_create_submit_pdu_array (const char *number,
     GList *sms_msg_pdu = NULL;
  
     smsc_pdu = sms_get_smsc_pdu (smsc, error);
-    submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, FALSE);
     address_pdu = sms_get_address_pdu(number, error);
     tppid_pdu = sms_get_tppid_pdu();
     sms_msg_pdu = sms_get_msg_pdu_list(text, validity, error);
 
     if (sms_msg_pdu != NULL && smsc_pdu != NULL &&
-        submit_data_pdu != NULL && address_pdu != NULL &&
-        tppid_pdu != NULL) {
+        address_pdu != NULL && tppid_pdu != NULL) {
 
         if (g_list_length(sms_msg_pdu) == 1) {
             GByteArray *pdu = NULL;
             GByteArray *msg_pdu = NULL;
             SmsPDUData *pdu_data = NULL;
 
+            submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, FALSE);
+            if (submit_data_pdu == NULL)
+                goto final;
+            
             pdu = g_byte_array_new ();
             pdu = g_byte_array_append (pdu, (guint8*) smsc_pdu->data, smsc_pdu->len);
             pdu = g_byte_array_append (pdu, (guint8*) submit_data_pdu->data, submit_data_pdu->len);
@@ -929,10 +1020,51 @@ sms_create_submit_pdu_array (const char *number,
 
             return result;
         }else{
-            //
+            GList *msg_iter = NULL;
+            guint i = 1;
+            
+            for (msg_iter=sms_msg_pdu; msg_iter != NULL; msg_iter = msg_iter->next){
+                GByteArray *pdu, *msg_pdu;
+                SmsPDUData *pdu_data = NULL;
+                
+                
+                if (msg_iter->next == NULL){
+                    submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, TRUE);
+                }else{
+                    submit_data_pdu = sms_get_submit_data_pdu (FALSE, validity, TRUE);
+                }
+                if (submit_data_pdu == NULL)
+                    goto final;
+                
+                msg_pdu = msg_iter->data;
+                
+                pdu = g_byte_array_new ();
+                pdu = g_byte_array_append (pdu, (guint8*) smsc_pdu->data, smsc_pdu->len);
+                pdu = g_byte_array_append (pdu, (guint8*) submit_data_pdu->data, submit_data_pdu->len);
+                pdu = g_byte_array_append (pdu, (guint8*) address_pdu->data, address_pdu->len);
+                pdu = g_byte_array_append (pdu, (guint8*) tppid_pdu->data, tppid_pdu->len);
+                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
+
+                /* g_print("smsc: %s\n", utils_bin2hexstr(smsc_pdu->data, smsc_pdu->len)); */
+                /* g_print("submit: %s\n", utils_bin2hexstr(submit_data_pdu->data, submit_data_pdu->len)); */
+                /* g_print("address: %s\n", utils_bin2hexstr(address_pdu->data, address_pdu->len)); */
+                /* g_print("tppid: %s\n", utils_bin2hexstr(tppid_pdu->data, tppid_pdu->len)); */
+                /* g_print("msg: %s\n", utils_bin2hexstr(msg_pdu->data, msg_pdu->len)); */
+
+                pdu_data = g_new(SmsPDUData, 1);
+                pdu_data->pdu = pdu;
+                pdu_data->msg_start = smsc_pdu->len ;
+                
+                if (result == NULL)
+                    result = g_ptr_array_new_with_free_func(sms_pdu_data_free);
+                g_ptr_array_add(result, pdu_data);
+
+                i++;
+            }
         }
     }
-    
+ 
+ final:
     if (smsc_pdu != NULL)
         g_byte_array_free (smsc_pdu, TRUE);
     if (submit_data_pdu != NULL)
