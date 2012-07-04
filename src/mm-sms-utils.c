@@ -995,89 +995,59 @@ sms_create_submit_pdu_array (const char *number,
     GByteArray *address_pdu = NULL;
     GByteArray *tppid_pdu = NULL;
     GList *sms_msg_pdu = NULL;
- 
+    GList *msg_iter = NULL;
+
+
     smsc_pdu = sms_get_smsc_pdu (smsc, error);
-    address_pdu = sms_get_address_pdu(number, error);
-    tppid_pdu = sms_get_tppid_pdu();
-    sms_msg_pdu = sms_get_msg_pdu_list(text, validity, error);
+    address_pdu = sms_get_address_pdu (number, error);
+    tppid_pdu = sms_get_tppid_pdu ();
+    sms_msg_pdu = sms_get_msg_pdu_list (text, validity, error);
 
     if (sms_msg_pdu != NULL && smsc_pdu != NULL &&
         address_pdu != NULL && tppid_pdu != NULL) {
 
-        if (g_list_length(sms_msg_pdu) == 1) {
-            GByteArray *pdu = NULL;
-            GByteArray *msg_pdu = NULL;
+        for (msg_iter=sms_msg_pdu; msg_iter != NULL; msg_iter = msg_iter->next) {
+            GByteArray *pdu, *msg_pdu;
             SmsPDUData *pdu_data = NULL;
+            gboolean require_udh;
 
-            submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, FALSE);
+            if (g_list_length (sms_msg_pdu) == 1)
+                require_udh = FALSE;
+            else
+                require_udh = TRUE;
+
+            if (msg_iter->next == NULL) {
+                submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, require_udh);
+            } else {
+                submit_data_pdu = sms_get_submit_data_pdu (FALSE, validity, require_udh);
+            }
+            
             if (submit_data_pdu == NULL)
                 goto final;
-            
+
+            msg_pdu = msg_iter->data;
+                
             pdu = g_byte_array_new ();
             pdu = g_byte_array_append (pdu, (guint8*) smsc_pdu->data, smsc_pdu->len);
             pdu = g_byte_array_append (pdu, (guint8*) submit_data_pdu->data, submit_data_pdu->len);
             pdu = g_byte_array_append (pdu, (guint8*) address_pdu->data, address_pdu->len);
             pdu = g_byte_array_append (pdu, (guint8*) tppid_pdu->data, tppid_pdu->len);
-
-            msg_pdu = g_list_nth_data(sms_msg_pdu, 0);
             pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
 
-            /* g_print("smsc: %s\n", utils_bin2hexstr(smsc_pdu->data, smsc_pdu->len)); */
-            /* g_print("submit: %s\n", utils_bin2hexstr(submit_data_pdu->data, submit_data_pdu->len)); */
-            /* g_print("address: %s\n", utils_bin2hexstr(address_pdu->data, address_pdu->len)); */
-            /* g_print("tppid: %s\n", utils_bin2hexstr(tppid_pdu->data, tppid_pdu->len)); */
-            /* g_print("msg: %s\n", utils_bin2hexstr(msg_pdu->data, msg_pdu->len)); */
+            /* g_print("smsc: %s\n", utils_bin2hexstr (smsc_pdu->data, smsc_pdu->len)); */
+            /* g_print("submit: %s\n", utils_bin2hexstr (submit_data_pdu->data, submit_data_pdu->len)); */
+            /* g_print("address: %s\n", utils_bin2hexstr (address_pdu->data, address_pdu->len)); */
+            /* g_print("tppid: %s\n", utils_bin2hexstr (tppid_pdu->data, tppid_pdu->len)); */
+            /* g_print("msg: %s\n", utils_bin2hexstr (msg_pdu->data, msg_pdu->len)); */
 
-            result = g_ptr_array_new_with_free_func(sms_pdu_data_free);
-            pdu_data = g_new(SmsPDUData, 1);
+            pdu_data = g_new (SmsPDUData, 1);
             pdu_data->pdu = pdu;
             pdu_data->msg_start = smsc_pdu->len ;
+                
+            if (result == NULL)
+                result = g_ptr_array_new_with_free_func (sms_pdu_data_free);
             
-            g_ptr_array_add(result, pdu_data);
-
-            return result;
-        }else{
-            GList *msg_iter = NULL;
-            guint i = 1;
-            
-            for (msg_iter=sms_msg_pdu; msg_iter != NULL; msg_iter = msg_iter->next){
-                GByteArray *pdu, *msg_pdu;
-                SmsPDUData *pdu_data = NULL;
-                
-                
-                if (msg_iter->next == NULL){
-                    submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, TRUE);
-                }else{
-                    submit_data_pdu = sms_get_submit_data_pdu (FALSE, validity, TRUE);
-                }
-                if (submit_data_pdu == NULL)
-                    goto final;
-                
-                msg_pdu = msg_iter->data;
-                
-                pdu = g_byte_array_new ();
-                pdu = g_byte_array_append (pdu, (guint8*) smsc_pdu->data, smsc_pdu->len);
-                pdu = g_byte_array_append (pdu, (guint8*) submit_data_pdu->data, submit_data_pdu->len);
-                pdu = g_byte_array_append (pdu, (guint8*) address_pdu->data, address_pdu->len);
-                pdu = g_byte_array_append (pdu, (guint8*) tppid_pdu->data, tppid_pdu->len);
-                pdu = g_byte_array_append (pdu, (guint8*) msg_pdu->data, msg_pdu->len);
-
-                /* g_print("smsc: %s\n", utils_bin2hexstr(smsc_pdu->data, smsc_pdu->len)); */
-                /* g_print("submit: %s\n", utils_bin2hexstr(submit_data_pdu->data, submit_data_pdu->len)); */
-                /* g_print("address: %s\n", utils_bin2hexstr(address_pdu->data, address_pdu->len)); */
-                /* g_print("tppid: %s\n", utils_bin2hexstr(tppid_pdu->data, tppid_pdu->len)); */
-                /* g_print("msg: %s\n", utils_bin2hexstr(msg_pdu->data, msg_pdu->len)); */
-
-                pdu_data = g_new(SmsPDUData, 1);
-                pdu_data->pdu = pdu;
-                pdu_data->msg_start = smsc_pdu->len ;
-                
-                if (result == NULL)
-                    result = g_ptr_array_new_with_free_func(sms_pdu_data_free);
-                g_ptr_array_add(result, pdu_data);
-
-                i++;
-            }
+            g_ptr_array_add (result, pdu_data);
         }
     }
  
