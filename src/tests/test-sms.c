@@ -12,6 +12,7 @@
  *
  * Copyright (C) 2010 Red Hat, Inc.
  * Copyright (C) 2011 The Chromium OS Authors.
+ * Copyright (c) 2012 OpenShine S.L.
  */
 
 #include <glib.h>
@@ -487,16 +488,20 @@ test_create_pdu_ucs2_with_smsc (void *f, gpointer d)
         0x04, 0x3B, 0x04, 0x4C, 0x00, 0x2C, 0x00, 0x20, 0x04, 0x34, 0x04, 0x35,
         0x04, 0x42, 0x04, 0x3A, 0x04, 0x30, 0x00, 0x21
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
+    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
+    
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 8);
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 8);
 }
 
 static void
@@ -513,16 +518,21 @@ test_create_pdu_ucs2_no_smsc (void *f, gpointer d)
         0x20, 0x04, 0x34, 0x04, 0x35, 0x04, 0x42, 0x04, 0x3A, 0x04, 0x30, 0x00,
         0x21
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    pdu = sms_create_submit_pdu (number, text, NULL, 5, 0, &len, &msgstart, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
+
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 1);
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 1);
+    
 }
 
 static void
@@ -539,16 +549,21 @@ test_create_pdu_gsm_with_smsc (void *f, gpointer d)
         0xD5, 0x74, 0x33, 0x98, 0x2B, 0x86, 0x03, 0xC1, 0xDB, 0x20, 0xD4, 0xB1,
         0x49, 0x5D, 0xC5, 0x52, 0x20, 0x08, 0x04, 0x02, 0x81, 0x00
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
+    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
+
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 8);
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 8);
+
 }
 
 static void
@@ -564,16 +579,21 @@ test_create_pdu_gsm_no_smsc (void *f, gpointer d)
         0xC1, 0xDB, 0x20, 0xD4, 0xB1, 0x49, 0x5D, 0xC5, 0x52, 0x20, 0x08, 0x04,
         0x02, 0x81, 0x00
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    pdu = sms_create_submit_pdu (number, text, NULL, 5, 0, &len, &msgstart, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
+
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 1);
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 1);
+
 }
 
 static void
@@ -587,8 +607,9 @@ test_create_pdu_gsm_3 (void *f, gpointer d)
         0x98, 0xCD, 0xCE, 0x83, 0xC6, 0xEF, 0x37, 0x1B, 0x04, 0x81, 0x40, 0x20,
         0x10
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
     /* Tests that a 25-character message (where the last septet is packed into
@@ -596,13 +617,16 @@ test_create_pdu_gsm_3 (void *f, gpointer d)
      * "core: fix some bugs in GSM7 packing code" the GSM packing code would
      * leave off the last octet.
      */
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
 
-    pdu = sms_create_submit_pdu (number, text, NULL, 5, 0, &len, &msgstart, &error);
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 1);
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 1);
+
 }
 
 static void
@@ -615,78 +639,21 @@ test_create_pdu_gsm_no_validity (void *f, gpointer d)
         0x00, 0x19, 0x54, 0x74, 0x7A, 0x0E, 0x4A, 0xCF, 0x41, 0xF2, 0x72, 0x98,
         0xCD, 0xCE, 0x83, 0xC6, 0xEF, 0x37, 0x1B, 0x04, 0x81, 0x40, 0x20, 0x10
     };
-    guint8 *pdu;
-    guint len = 0, msgstart = 0;
+    GPtrArray *array;
+    GByteArray *msg_pdu = NULL;
+    SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    pdu = sms_create_submit_pdu (number, text, NULL, 0, 0, &len, &msgstart, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 0, 0, &error);
+    pdu_data = g_ptr_array_index(array, 0);
+    msg_pdu = pdu_data->pdu;
+
     g_assert_no_error (error);
-    g_assert (pdu);
-    g_assert_cmpint (len, ==, sizeof (expected));
-    g_assert_cmpint (memcmp (pdu, expected, len), ==, 0);
-    g_assert_cmpint (msgstart, ==, 1);
-}
+    g_assert (pdu_data);
+    g_assert_cmpint (msg_pdu->len, ==, sizeof (expected));
+    g_assert_cmpint (memcmp (msg_pdu->data, expected, msg_pdu->len), ==, 0);
+    g_assert_cmpint (pdu_data->msg_start, ==, 1);
 
-static void
-test_array_pdu1 (void *f, gpointer d)
-{
-  GPtrArray *array;
-  GByteArray *msg_pdu = NULL;
-  SmsPDUData *pdu_data = NULL;
-  GError *error = NULL;
-  char *hexpdu;
-
-  guint8 *pdu;
-  guint len = 0, msgstart = 0;
-  char *hexpdu2;
-  
-  static const char *smsc = "+19037029920";
-  static const char *number = "+15555551234";
-  static const char *text = "Hi there...Tue 17th Jan 2012 05:30.18 pm (GMT+1) ΔΔΔΔΔ";
-
-  array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
-  pdu_data = g_ptr_array_index(array, 0);
-  msg_pdu = pdu_data->pdu;
-
-  hexpdu = utils_bin2hexstr (msg_pdu->data, msg_pdu->len);
-  
-  pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
-  hexpdu2 = utils_bin2hexstr (pdu, len);
-
-  g_assert_cmpstr (hexpdu, ==, hexpdu2);
-  g_assert_cmpint (msg_pdu->len, ==, len);
-  g_assert_cmpint (pdu_data->msg_start, ==, msgstart);
-}
-
-static void
-test_array_pdu2 (void *f, gpointer d)
-{
-  GPtrArray *array;
-  GByteArray *msg_pdu = NULL;
-  SmsPDUData *pdu_data = NULL;
-  GError *error = NULL;
-  char *hexpdu;
-
-  guint8 *pdu;
-  guint len = 0, msgstart = 0;
-  char *hexpdu2;
-  
-  static const char *smsc = "+19037029920";
-  static const char *number = "+15555551234";
-  static const char *text = "你好";
-
-  array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
-  pdu_data = g_ptr_array_index(array, 0);
-  msg_pdu = pdu_data->pdu;
-
-  hexpdu = utils_bin2hexstr (msg_pdu->data, msg_pdu->len);
-  
-  pdu = sms_create_submit_pdu (number, text, smsc, 5, 0, &len, &msgstart, &error);
-  hexpdu2 = utils_bin2hexstr (pdu, len);
-
-  g_assert_cmpstr (hexpdu, ==, hexpdu2);
-  g_assert_cmpint (msg_pdu->len, ==, len);
-  g_assert_cmpint (pdu_data->msg_start, ==, msgstart);
 }
 
 #if 0
@@ -745,10 +712,6 @@ int main (int argc, char **argv)
 
     g_test_suite_add (suite, TESTCASE (test_create_pdu_gsm_3, NULL));
     g_test_suite_add (suite, TESTCASE (test_create_pdu_gsm_no_validity, NULL));
-
-    //New sms_create_submit_pdu_array
-    g_test_suite_add (suite, TESTCASE (test_array_pdu1, NULL));
-    g_test_suite_add (suite, TESTCASE (test_array_pdu2, NULL));
 
     result = g_test_run ();
 
