@@ -23,15 +23,6 @@
 
 GHashTable *sms_parse_pdu (const char *hexpdu, GError **error);
 
-guint8 *sms_create_submit_pdu (const char *number,
-                               const char *text,
-                               const char *smsc,
-                               guint validity,
-                               guint class,
-                               guint *out_pdulen,
-                               guint *out_msgstart,
-                               GError **error);
-
 GHashTable *sms_properties_hash_new (const char *smsc,
                                      const char *number,
                                      const char *timestamp,

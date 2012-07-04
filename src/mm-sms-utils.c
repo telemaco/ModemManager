@@ -964,6 +964,23 @@ sms_pdu_data_free (gpointer element){
     g_free(pdu_data);
 }
 
+/**
+ * sms_create_submit_pdu_array:
+ *
+ * @number: the subscriber number to send this message to
+ * @text: the body of this SMS
+ * @smsc: if given, the SMSC address
+ * @validity: minutes until the SMS should expire in the SMSC, or 0 for a
+ *  suitable default
+ * @class: unused
+ * @error: on error, filled with the error that occurred
+ *
+ * Constructs a  SMS message with the given details, preferring to
+ * use the UCS2 character set when the message will fit, otherwise falling back
+ * to the GSM character set.
+ *
+ * Returns: an array of SmsPDUData on success, or %NULL on error
+ **/
 GPtrArray *
 sms_create_submit_pdu_array (const char *number,
                              const char *text,
@@ -1078,178 +1095,3 @@ sms_create_submit_pdu_array (const char *number,
     
     return result;
 }
-
-/**
- * sms_create_submit_pdu:
- *
- * @number: the subscriber number to send this message to
- * @text: the body of this SMS
- * @smsc: if given, the SMSC address
- * @validity: minutes until the SMS should expire in the SMSC, or 0 for a
- *  suitable default
- * @class: unused
- * @out_pdulen: on success, the size of the returned PDU in bytes
- * @out_msgstart: on success, the byte index in the returned PDU where the
- *  message starts (ie, skipping the SMSC length byte and address, if present)
- * @error: on error, filled with the error that occurred
- *
- * Constructs a single-part SMS message with the given details, preferring to
- * use the UCS2 character set when the message will fit, otherwise falling back
- * to the GSM character set.
- *
- * Returns: the constructed PDU data on success, or %NULL on error
- **/
-guint8 *
-sms_create_submit_pdu (const char *number,
-                       const char *text,
-                       const char *smsc,
-                       guint validity,
-                       guint class,
-                       guint *out_pdulen,
-                       guint *out_msgstart,
-                       GError **error)
-{
-    guint8 *pdu;
-    guint len, offset = 0;
-    MMModemCharset best_cs = MM_MODEM_CHARSET_GSM;
-    guint ucs2len = 0, gsm_unsupported = 0;
-    guint textlen = 0;
-
-    g_return_val_if_fail (number != NULL, NULL);
-    g_return_val_if_fail (text != NULL, NULL);
-
-    /* FIXME: support multiple fragments */
-
-    textlen = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_GSM, &gsm_unsupported);
-    if (textlen > 160) {
-        g_set_error_literal (error,
-                             MM_MODEM_ERROR,
-                             MM_MODEM_ERROR_OPERATION_NOT_SUPPORTED,
-                             "Cannot encode message to fit into an SMS.");
-        return NULL;
-    }
-
-    /* If there are characters that are unsupported in the GSM charset, try
-     * UCS2.  If the UCS2 encoded string is too long to fit in an SMS, then
-     * just use GSM and suck up the unconverted chars.
-     */
-    if (gsm_unsupported > 0) {
-        ucs2len = mm_charset_get_encoded_len (text, MM_MODEM_CHARSET_UCS2, NULL);
-        if (ucs2len <= 140) {
-            best_cs = MM_MODEM_CHARSET_UCS2;
-            textlen = ucs2len;
-        }
-    }
-    
-    /* Build up the PDU */
-    pdu = g_malloc0 (PDU_SIZE);
-    g_return_val_if_fail (pdu != NULL, NULL);
-
-    if (smsc) {
-        len = sms_encode_address (smsc, pdu, PDU_SIZE, TRUE);
-        if (len == 0) {
-            g_set_error (error,
-                         MM_MSG_ERROR,
-                         MM_MSG_ERROR_INVALID_PDU_PARAMETER,
-                         "Invalid SMSC address '%s'", smsc);
-            goto error;
-        }
-        offset += len;
-    } else {
-        /* No SMSC, use default */
-        pdu[offset++] = 0x00;
-    }
-
-    if (out_msgstart)
-        *out_msgstart = offset;
-
-    if (validity > 0)
-        pdu[offset] = 1 << 4; /* TP-VP present; format RELATIVE */
-    else
-        pdu[offset] = 0;      /* TP-VP not present */
-    pdu[offset++] |= 0x01;    /* TP-MTI = SMS-SUBMIT */
-
-    pdu[offset++] = 0x00;     /* TP-Message-Reference: filled by device */
-
-    len = sms_encode_address (number, &pdu[offset], PDU_SIZE - offset, FALSE);
-    if (len == 0) {
-        g_set_error (error,
-                     MM_MSG_ERROR,
-                     MM_MSG_ERROR_INVALID_PDU_PARAMETER,
-                     "Invalid send-to number '%s'", number);
-        goto error;
-    }
-    offset += len;
-
-    /* TP-PID */
-    pdu[offset++] = 0x00;
-
-    /* TP-DCS */
-    if (best_cs == MM_MODEM_CHARSET_UCS2)
-        pdu[offset++] = 0x08;
-    else
-        pdu[offset++] = 0x00;  /* GSM */
-
-    /* TP-Validity-Period: 4 days */
-    if (validity > 0)
-        pdu[offset++] = validity_to_relative (validity);
-
-    /* TP-User-Data-Length */
-    pdu[offset++] = textlen;
-
-    if (best_cs == MM_MODEM_CHARSET_GSM) {
-        guint8 *unpacked, *packed;
-        guint32 unlen = 0, packlen = 0;
-
-        unpacked = mm_charset_utf8_to_unpacked_gsm (text, &unlen);
-        if (!unpacked || unlen == 0) {
-            g_free (unpacked);
-            g_set_error_literal (error,
-                                 MM_MSG_ERROR,
-                                 MM_MSG_ERROR_INVALID_PDU_PARAMETER,
-                                 "Failed to convert message text to GSM.");
-            goto error;
-        }
-
-        packed = gsm_pack (unpacked, unlen, 0, &packlen);
-        g_free (unpacked);
-        if (!packed || packlen == 0) {
-            g_free (packed);
-            g_set_error_literal (error,
-                                 MM_MSG_ERROR,
-                                 MM_MSG_ERROR_INVALID_PDU_PARAMETER,
-                                 "Failed to pack message text to GSM.");
-            goto error;
-        }
-
-        memcpy (&pdu[offset], packed, packlen);
-        g_free (packed);
-        offset += packlen;
-    } else if (best_cs == MM_MODEM_CHARSET_UCS2) {
-        GByteArray *array;
-
-        array = g_byte_array_sized_new (textlen / 2);
-        if (!mm_modem_charset_byte_array_append (array, text, FALSE, best_cs)) {
-            g_byte_array_free (array, TRUE);
-            g_set_error_literal (error,
-                                 MM_MSG_ERROR,
-                                 MM_MSG_ERROR_INVALID_PDU_PARAMETER,
-                                 "Failed to convert message text to UCS2.");
-            goto error;
-        }
-
-        memcpy (&pdu[offset], array->data, array->len);
-        offset += array->len;
-        g_byte_array_free (array, TRUE);
-    } else
-        g_assert_not_reached ();
-
-    if (out_pdulen)
-        *out_pdulen = offset;
-    return pdu;
-
-error:
-    g_free (pdu);
-    return NULL;
-}
-
