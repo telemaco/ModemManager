@@ -493,7 +493,7 @@ test_create_pdu_ucs2_with_smsc (void *f, gpointer d)
     SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
     
@@ -523,7 +523,7 @@ test_create_pdu_ucs2_no_smsc (void *f, gpointer d)
     SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
 
@@ -554,7 +554,7 @@ test_create_pdu_gsm_with_smsc (void *f, gpointer d)
     SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, smsc, 5, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
 
@@ -584,7 +584,7 @@ test_create_pdu_gsm_no_smsc (void *f, gpointer d)
     SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
 
@@ -617,7 +617,7 @@ test_create_pdu_gsm_3 (void *f, gpointer d)
      * "core: fix some bugs in GSM7 packing code" the GSM packing code would
      * leave off the last octet.
      */
-    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 5, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
 
@@ -644,7 +644,7 @@ test_create_pdu_gsm_no_validity (void *f, gpointer d)
     SmsPDUData *pdu_data = NULL;
     GError *error = NULL;
 
-    array = sms_create_submit_pdu_array (number, text, NULL, 0, 0, &error);
+    array = sms_create_submit_pdu_array (number, text, NULL, 0, 0, FALSE, &error);
     pdu_data = g_ptr_array_index(array, 0);
     msg_pdu = pdu_data->pdu;
 

@@ -670,7 +670,7 @@ sms_get_submit_data_pdu (gboolean request_status,
     if (udh == TRUE)
         pdu[offset] |= 0x40;
 
-    if (request_status)
+    if (request_status == FALSE)
         pdu[offset++] |= 0x01;  /* TP-MTI = SMS-SUBMIT */
     else
         pdu[offset++] |= 0x21;
@@ -972,6 +972,7 @@ sms_pdu_data_free (gpointer element){
  * @validity: minutes until the SMS should expire in the SMSC, or 0 for a
  *  suitable default
  * @class: unused
+ * @request_status: TRUE if you need confirmation from SMSC of the sms sent.
  * @error: on error, filled with the error that occurred
  *
  * Constructs a  SMS message with the given details, preferring to
@@ -986,6 +987,7 @@ sms_create_submit_pdu_array (const char *number,
                              const char *smsc,
                              guint validity,
                              guint class,
+                             gboolean request_status,
                              GError **error)
 {
     GPtrArray *result = NULL;
@@ -1016,7 +1018,7 @@ sms_create_submit_pdu_array (const char *number,
                 require_udh = TRUE;
 
             if (msg_iter->next == NULL) {
-                submit_data_pdu = sms_get_submit_data_pdu (TRUE, validity, require_udh);
+                submit_data_pdu = sms_get_submit_data_pdu (request_status, validity, require_udh);
             } else {
                 submit_data_pdu = sms_get_submit_data_pdu (FALSE, validity, require_udh);
             }

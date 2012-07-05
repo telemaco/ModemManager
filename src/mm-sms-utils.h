@@ -37,6 +37,7 @@ sms_create_submit_pdu_array (const char *number,
                              const char *smsc,
                              guint validity,
                              guint class,
+                             gboolean request_status,
                              GError **error);
 
 typedef struct _SmsPDUData SmsPDUData;

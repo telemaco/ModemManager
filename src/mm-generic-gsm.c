@@ -5003,7 +5003,8 @@ sms_send (MMModemGsmSms *modem,
     }
 
     pdu_array = sms_create_submit_pdu_array (number, text, smsc, 
-                                             validity, class, &info->error);
+                                             validity, class, FALSE,
+                                             &info->error);
     if (!pdu_array) {
         mm_callback_info_schedule (info);
         return;
